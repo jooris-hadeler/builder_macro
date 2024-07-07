@@ -33,6 +33,7 @@ impl Builder {
         });
 
         quote! {
+            #[allow(missing_docs)]
             pub struct #builder_name {
                 #(#fields)*
             }
@@ -59,6 +60,7 @@ impl Builder {
         }
 
         quote! {
+            #[allow(missing_docs)]
             pub fn #method_name<I: Into<#ty>>(mut self, #name: I) -> Self {
                 self.#name = Some(#name.into());
                 self
@@ -105,6 +107,7 @@ impl Builder {
         });
 
         quote! {
+            #[allow(missing_docs)]
             pub fn build(self) -> Result<#name, String> {
                 Ok(#name {
                     #(#fields)*
@@ -129,6 +132,7 @@ impl Builder {
 
         quote! {
             impl #name {
+                #[allow(missing_docs)]
                 pub fn builder() -> #builder_name {
                     #builder_name {
                         #(#fields)*
