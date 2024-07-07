@@ -144,6 +144,10 @@ impl Builder {
 
     /// Generates default values for the builder fields.
     fn generate_field_default(&self, field: &BuilderField) -> TS {
+        if field.use_default {
+            return quote! { Some(Default::default()) };
+        }
+
         match &field.default {
             Some(default) => quote! { Some(#default.into()) },
             None => quote! { None },

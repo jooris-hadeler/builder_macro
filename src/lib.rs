@@ -6,7 +6,10 @@ use syn::{parse_macro_input, Data, DataStruct, DeriveInput};
 mod builder;
 mod generate;
 
-#[proc_macro_derive(Builder, attributes(builder_skip, builder_default))]
+#[proc_macro_derive(
+    Builder,
+    attributes(builder_skip, builder_default, builder_use_default)
+)]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -34,6 +37,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let field_ty = &field.ty;
 
         let mut default = None;
+        let mut use_default = false;
         let mut skip = false;
 
         // Check for builder_skip and builder_default attributes on the field.
@@ -64,11 +68,29 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         });
                     }
                 }
+            } else if path.is_ident("builder_use_default") {
+                // Make sure the attribute has no arguments.
+                match &attribute.meta {
+                    syn::Meta::Path(_) => {
+                        use_default = true;
+                    }
+                    _ => {
+                        return TokenStream::from(quote! {
+                            compile_error!("builder_use_default expected no arguments, e.g. `#[builder_use_default]`.");
+                        });
+                    }
+                }
             }
         }
 
         // Create a new field and add it to the builder.
-        let field = BuilderField::new(field_name.clone(), field_ty.clone(), default, skip);
+        let field = BuilderField::new(
+            field_name.clone(),
+            field_ty.clone(),
+            default,
+            use_default,
+            skip,
+        );
         builder.add_field(field);
     }
 

@@ -31,17 +31,20 @@ pub struct BuilderField {
     pub ty: syn::Type,
     /// The default value of the field.
     pub default: Option<syn::Expr>,
+    /// Whether the field should use the Default trait.
+    pub use_default: bool,
     /// Whether the field should be skipped.
     pub skip: bool,
 }
 
 impl BuilderField {
     /// Creates a new builder field.
-    pub fn new(name: Ident, ty: syn::Type, default: Option<syn::Expr>, skip: bool) -> Self {
+    pub fn new(name: Ident, ty: syn::Type, default: Option<syn::Expr>, use_default: bool, skip: bool) -> Self {
         Self {
             name,
             ty,
             default,
+            use_default,
             skip,
         }
     }

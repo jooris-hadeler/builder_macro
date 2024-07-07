@@ -9,6 +9,8 @@ pub struct User {
 #[derive(Builder)]
 pub struct Complex {
     pub object: Option<Option<u32>>,
+    #[builder_use_default]
+    pub test: Option<bool>,
 }
 
 #[test]
@@ -29,20 +31,20 @@ fn test_optional() {
         .unwrap();
 
     assert_eq!(v.name, "Frank");
-    assert_eq!(v.age, None);
+    assert_eq!(v.age, Some(15));
 
     let c = Complex::builder().with_object(Some(42)).build().unwrap();
 
     assert_eq!(c.object, Some(Some(42)));
 
-    let d = Complex::builder().build().unwrap();
+    let d = Complex::builder().with_object(None::<u32>).build().unwrap();
 
-    assert_eq!(d.object, None);
+    assert_eq!(d.object, Some(None));
 
     let e = Complex::builder()
         .with_object(None::<Option<u32>>)
         .build()
         .unwrap();
 
-    assert_eq!(e.object, Some(None));
+    assert_eq!(e.object, None);
 }
