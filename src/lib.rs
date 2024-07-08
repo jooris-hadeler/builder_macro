@@ -1,99 +1,200 @@
-use builder::BuilderField;
-use proc_macro::TokenStream;
-use quote::quote;
-use syn::{parse_macro_input, Data, DataStruct, DeriveInput};
+use darling::{ast, util::parse_expr, FromDeriveInput, FromField};
+use quote::{quote, ToTokens};
 
-mod builder;
-mod generate;
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(builder), supports(struct_named))]
+struct BuilderStructReceiver {
+    /// The struct ident.
+    ident: syn::Ident,
+    /// The type's generics. You'll need these any time your trait is expected
+    /// to work with types that declare generics.
+    generics: syn::Generics,
+    /// Receives the body of the struct or enum. We don't care about
+    /// struct fields because we previously told darling we only accept structs.
+    data: ast::Data<(), BuilderFieldReceiver>,
+}
 
-#[proc_macro_derive(
-    Builder,
-    attributes(builder_skip, builder_default, builder_use_default)
-)]
-pub fn derive(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+impl ToTokens for BuilderStructReceiver {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let BuilderStructReceiver {
+            ident,
+            generics,
+            data,
+        } = self;
 
-    // Check if the input is a struct.
-    let Data::Struct(DataStruct { fields, .. }) = &input.data else {
-        return TokenStream::from(quote! {
-            compile_error!("Builder derive only works with structs.");
+        let builder_ident = syn::Ident::new(&format!("{}Builder", ident), ident.span());
+
+        let (_imp, ty, wher) = generics.split_for_impl();
+        let fields = data.as_ref().take_struct().unwrap().fields;
+
+        // Generate the fields of the builder struct.
+        let builder_fields: Vec<proc_macro2::TokenStream> = fields
+            .iter()
+            .map(|field| {
+                let BuilderFieldReceiver {
+                    ident,
+                    ty,
+                    skip,
+                    default,
+                } = field;
+
+                if *skip && default.is_none() {
+                    panic!("Cannot use `#[builder(skip)]` without having `#[builder(default = \"\")]` on the same field.");
+                }
+                
+                quote! {
+                    #ident: Option<#ty>,
+                }
+            })
+            .collect();
+
+        // Generate the builder struct.
+        tokens.extend(quote! {
+            pub struct #builder_ident #ty #wher {
+                #(
+                    #builder_fields
+                )*
+            }
         });
-    };
 
-    let name = &input.ident;
+        // Generate the builder defaults.
+        let builder_field_defaults: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
+            let BuilderFieldReceiver {
+                ident,
+                skip,
+                default,
+                ..
+            } = field;
 
-    // Create a new builder struct containing information about the struct being built.
-    let mut builder = builder::Builder::new(name.clone());
+            if *skip {
+                let default = default.as_ref().unwrap();
 
-    // Iterate over the fields of the struct and add them to the builder.
-    for field in fields {
-        // Check if the field is named and return an error if it is not.
-        let Some(field_name) = field.ident.as_ref() else {
-            return TokenStream::from(quote! {
-                compile_error!("Builder derive only works with named fields.");
-            });
-        };
-
-        let field_ty = &field.ty;
-
-        let mut default = None;
-        let mut use_default = false;
-        let mut skip = false;
-
-        // Check for builder_skip and builder_default attributes on the field.
-        for attribute in field.attrs.iter() {
-            let path = attribute.path();
-
-            if path.is_ident("builder_skip") {
-                // Make sure the attribute has no arguments.
-                match &attribute.meta {
-                    syn::Meta::Path(_) => {
-                        skip = true;
-                    }
-                    _ => {
-                        return TokenStream::from(quote! {
-                            compile_error!("builder_skip expected no arguments, e.g. `#[builder_skip]`.");
-                        });
-                    }
+                quote! {
+                    #ident: Some(#default),
                 }
-            } else if path.is_ident("builder_default") {
-                // Make sure the attribute has a single argument.
-                match &attribute.meta {
-                    syn::Meta::NameValue(named) => {
-                        default = Some(named.value.clone());
+            } else {
+                match default {
+                    Some(default) => {
+                        quote! {
+                            #ident: Some(#default),
+                        }
                     }
-                    _ => {
-                        return TokenStream::from(quote! {
-                            compile_error!("builder_default expected default value, e.g. `#[builder_default = \"42\"]`.");
-                        });
-                    }
-                }
-            } else if path.is_ident("builder_use_default") {
-                // Make sure the attribute has no arguments.
-                match &attribute.meta {
-                    syn::Meta::Path(_) => {
-                        use_default = true;
-                    }
-                    _ => {
-                        return TokenStream::from(quote! {
-                            compile_error!("builder_use_default expected no arguments, e.g. `#[builder_use_default]`.");
-                        });
+                    None => {
+                        quote! {
+                            #ident: None,
+                        }
                     }
                 }
             }
-        }
+        }).collect();
 
-        // Create a new field and add it to the builder.
-        let field = BuilderField::new(
-            field_name.clone(),
-            field_ty.clone(),
-            default,
-            use_default,
-            skip,
-        );
-        builder.add_field(field);
+        // Generate the builder default implementation.
+        tokens.extend(quote! {
+            impl Default for #builder_ident #ty #wher {
+                fn default() -> Self {
+                    Self {
+                        #(
+                            #builder_field_defaults
+                        )*
+                    }
+                }
+            }
+        });
+
+        // Generate the with methods.
+        let builder_methods: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
+            let BuilderFieldReceiver {
+                ident,
+                ty,
+                skip,
+                ..
+            } = field;
+
+            let ident = ident.as_ref().unwrap();
+            let with_ident = syn::Ident::new(&format!("with_{}", ident), ident.span());
+
+            if *skip {
+                quote! {}
+            } else {
+                quote! {
+                    pub fn #with_ident<INT: Into<#ty> + Sized>(mut self, #ident: INT) -> Self {
+                        self.#ident = Some(#ident.into());
+                        self
+                    }
+                }
+            }
+        }).collect();
+
+        // Generate the builder implementation.
+        tokens.extend(quote! {
+            impl #builder_ident #ty #wher {
+                #(
+                    #builder_methods
+                )*
+            }
+        });
+
+        // Generate the build method fields.
+        let build_method_fields: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
+            let BuilderFieldReceiver {
+                ident,
+                skip,
+                ..
+            } = field;
+
+            if *skip {
+                quote! {
+                    #ident: self.#ident.unwrap(),
+                }
+            } else {
+                quote! {
+                    #ident: self.#ident.ok_or(format!("Field '{}' is required.", stringify!(#ident)))?,
+                }
+            }
+        }).collect();
+
+        // Generate the build method.
+        tokens.extend(quote! {
+            impl #builder_ident #ty #wher {
+                pub fn build(self) -> Result<#ident #ty, String> {
+                    Ok(#ident {
+                        #(
+                            #build_method_fields
+                        )*
+                    })
+                }
+            }
+        });
+
+        // Generate the builder function.
+        tokens.extend(quote! {
+            impl #ident #ty #wher {
+                pub fn builder() -> #builder_ident #ty #wher {
+                    #builder_ident::default()
+                }
+            }
+        });
     }
+}
 
-    // Generate the builder code.
-    builder.generate()
+#[derive(Debug, FromField)]
+#[darling(attributes(builder))]
+struct BuilderFieldReceiver {
+    /// The ident of the field.
+    ident: Option<syn::Ident>,
+    /// The type of the field.
+    ty: syn::Type,
+    #[darling(default)]
+    /// Whether the field should be skipped.
+    skip: bool,
+    #[darling(with = parse_expr::preserve_str_literal, map = Some)]
+    /// The default value of the field.
+    default: Option<syn::Expr>,
+}
+
+#[proc_macro_derive(Builder, attributes(builder))]
+pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    let receiver = BuilderStructReceiver::from_derive_input(&input).unwrap();
+    receiver.to_token_stream().into()
 }
