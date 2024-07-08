@@ -91,7 +91,7 @@ impl ToTokens for BuilderStructReceiver {
 
         // Generate the builder default implementation.
         tokens.extend(quote! {
-            impl Default for #builder_ident #ty #wher {
+            impl #ty Default for #builder_ident #ty #wher {
                 fn default() -> Self {
                     Self {
                         #(
@@ -129,7 +129,7 @@ impl ToTokens for BuilderStructReceiver {
 
         // Generate the builder implementation.
         tokens.extend(quote! {
-            impl #builder_ident #ty #wher {
+            impl #ty #builder_ident #ty #wher {
                 #(
                     #builder_methods
                 )*
@@ -157,7 +157,7 @@ impl ToTokens for BuilderStructReceiver {
 
         // Generate the build method.
         tokens.extend(quote! {
-            impl #builder_ident #ty #wher {
+            impl #ty #builder_ident #ty #wher {
                 #[allow(missing_docs)]
                 pub fn build(self) -> Result<#ident #ty, String> {
                     Ok(#ident {
@@ -171,9 +171,9 @@ impl ToTokens for BuilderStructReceiver {
 
         // Generate the builder function.
         tokens.extend(quote! {
-            impl #ident #ty #wher {
+            impl #ty #ident #ty #wher {
                 /// This method will return a new builder instance.
-                pub fn builder() -> #builder_ident #ty #wher {
+                pub fn builder() -> #builder_ident #ty {
                     #builder_ident::default()
                 }
             }
