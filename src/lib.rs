@@ -50,6 +50,7 @@ impl ToTokens for BuilderStructReceiver {
 
         // Generate the builder struct.
         tokens.extend(quote! {
+            #[allow(missing_docs)]
             pub struct #builder_ident #ty #wher {
                 #(
                     #builder_fields
@@ -117,6 +118,7 @@ impl ToTokens for BuilderStructReceiver {
                 quote! {}
             } else {
                 quote! {
+                    #[allow(missing_docs)]
                     pub fn #with_ident<INT: Into<#ty> + Sized>(mut self, #ident: INT) -> Self {
                         self.#ident = Some(#ident.into());
                         self
@@ -156,6 +158,7 @@ impl ToTokens for BuilderStructReceiver {
         // Generate the build method.
         tokens.extend(quote! {
             impl #builder_ident #ty #wher {
+                #[allow(missing_docs)]
                 pub fn build(self) -> Result<#ident #ty, String> {
                     Ok(#ident {
                         #(
@@ -169,6 +172,7 @@ impl ToTokens for BuilderStructReceiver {
         // Generate the builder function.
         tokens.extend(quote! {
             impl #ident #ty #wher {
+                /// This method will return a new builder instance.
                 pub fn builder() -> #builder_ident #ty #wher {
                     #builder_ident::default()
                 }
