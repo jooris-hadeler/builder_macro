@@ -1,5 +1,5 @@
 use darling::{ast, util::parse_expr, FromDeriveInput, FromField};
-use quote::{quote, ToTokens};
+use quote::{quote, quote_spanned, ToTokens};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(builder), supports(struct_named))]
@@ -27,54 +27,39 @@ impl ToTokens for BuilderStructReceiver {
         let (_imp, ty, wher) = generics.split_for_impl();
         let fields = data.as_ref().take_struct().unwrap().fields;
 
-        // Generate the fields of the builder struct.
-        let builder_fields: Vec<proc_macro2::TokenStream> = fields
-            .iter()
-            .map(|field| {
-                let BuilderFieldReceiver {
-                    ident,
-                    ty,
-                    skip,
-                    default,
-                } = field;
+        // Make sure that if a field is skipped, it has a default value.
+        let mut error = false;
+        for field in fields.iter() {
+            if field.skip && field.default.is_none() {
+                let span = field.ident.as_ref().unwrap().span();
 
-                if *skip && default.is_none() {
-                    panic!("Cannot use `#[builder(skip)]` without having `#[builder(default = \"\")]` on the same field.");
-                }
-                
-                quote! {
-                    #ident: Option<#ty>,
-                }
-            })
-            .collect();
-
-        // Generate the builder struct.
-        tokens.extend(quote! {
-            #[allow(missing_docs)]
-            pub struct #builder_ident #ty #wher {
-                #(
-                    #builder_fields
-                )*
+                tokens.extend(quote_spanned! {
+                    span => compile_error!("Cannot use `#[builder(skip)]` without having `#[builder(default = \"\")]` on the same field."); 
+                });
+                error = true;
             }
-        });
+        }
+
+        if error {
+            return;
+        }
+
+        // Generate the fields of the builder struct.
+        let mut builder_fields = proc_macro2::TokenStream::new();
+        fields
+            .iter()
+            .for_each(|BuilderFieldReceiver { ident, ty, .. }| {
+                builder_fields.extend(quote! {
+                    #ident: Option<#ty>,
+                });
+            });
 
         // Generate the builder defaults.
-        let builder_field_defaults: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
-            let BuilderFieldReceiver {
-                ident,
-                skip,
-                default,
-                ..
-            } = field;
-
-            if *skip {
-                let default = default.as_ref().unwrap();
-
-                quote! {
-                    #ident: Some(#default),
-                }
-            } else {
-                match default {
+        let mut builder_field_defaults = proc_macro2::TokenStream::new();
+        fields
+            .iter()
+            .for_each(|BuilderFieldReceiver { ident, default, .. }| {
+                builder_field_defaults.extend(match default {
                     Some(default) => {
                         quote! {
                             #ident: Some(#default),
@@ -85,97 +70,68 @@ impl ToTokens for BuilderStructReceiver {
                             #ident: None,
                         }
                     }
-                }
-            }
-        }).collect();
-
-        // Generate the builder default implementation.
-        tokens.extend(quote! {
-            impl #ty Default for #builder_ident #ty #wher {
-                fn default() -> Self {
-                    Self {
-                        #(
-                            #builder_field_defaults
-                        )*
-                    }
-                }
-            }
-        });
+                });
+            });
 
         // Generate the with methods.
-        let builder_methods: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
-            let BuilderFieldReceiver {
-                ident,
-                ty,
-                skip,
-                ..
-            } = field;
-
+        let mut builder_methods = proc_macro2::TokenStream::new();
+        fields.iter().for_each(|BuilderFieldReceiver { ident, ty, skip, .. }| {
             let ident = ident.as_ref().unwrap();
             let with_ident = syn::Ident::new(&format!("with_{}", ident), ident.span());
 
-            if *skip {
-                quote! {}
-            } else {
-                quote! {
+            if !*skip {
+                builder_methods.extend(quote! {
                     #[allow(missing_docs)]
-                    pub fn #with_ident<INT: Into<#ty> + Sized>(mut self, #ident: INT) -> Self {
+                    pub fn #with_ident<BUILDER_TYPE_INTO: Into<#ty> + Sized>(mut self, #ident: BUILDER_TYPE_INTO) -> Self {
                         self.#ident = Some(#ident.into());
                         self
                     }
-                }
-            }
-        }).collect();
-
-        // Generate the builder implementation.
-        tokens.extend(quote! {
-            impl #ty #builder_ident #ty #wher {
-                #(
-                    #builder_methods
-                )*
+                });
             }
         });
 
         // Generate the build method fields.
-        let build_method_fields: Vec<proc_macro2::TokenStream> = fields.iter().map(|field| {
-            let BuilderFieldReceiver {
-                ident,
-                skip,
-                ..
-            } = field;
-
-            if *skip {
-                quote! {
-                    #ident: self.#ident.unwrap(),
-                }
-            } else {
-                quote! {
+        let mut build_method_fields = proc_macro2::TokenStream::new();
+        fields
+            .iter()
+            .for_each(|BuilderFieldReceiver { ident, .. }| {
+                build_method_fields.extend(quote! {
                     #ident: self.#ident.ok_or(format!("Field '{}' is required.", stringify!(#ident)))?,
+                });
+            });
+
+        tokens.extend(quote! {
+            #[allow(missing_docs)]
+            pub struct #builder_ident #ty #wher {
+                #builder_fields
+            }
+
+            impl #ty Default for #builder_ident #ty #wher {
+                fn default() -> Self {
+                    Self {
+                        #builder_field_defaults
+                    }
                 }
             }
-        }).collect();
 
-        // Generate the build method.
-        tokens.extend(quote! {
             impl #ty #builder_ident #ty #wher {
                 #[allow(missing_docs)]
                 pub fn build(self) -> Result<#ident #ty, String> {
                     Ok(#ident {
-                        #(
-                            #build_method_fields
-                        )*
+                        #build_method_fields
                     })
                 }
             }
-        });
 
-        // Generate the builder function.
-        tokens.extend(quote! {
             impl #ty #ident #ty #wher {
                 /// This method will return a new builder instance.
                 pub fn builder() -> #builder_ident #ty {
                     #builder_ident::default()
                 }
+            }
+
+            impl #ty #builder_ident #ty #wher {
+                #builder_methods
             }
         });
     }

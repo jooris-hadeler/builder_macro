@@ -12,10 +12,7 @@ where
 
 #[test]
 fn test_generic() {
-    let tuple = Point::<i32, i32>::builder()
-        .with_x(1)
-        .build()
-        .unwrap();
+    let tuple = Point::<i32, i32>::builder().with_x(1).build().unwrap();
 
     assert_eq!(tuple.x, 1);
     assert_eq!(tuple.y, 0);
